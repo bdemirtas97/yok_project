@@ -66,7 +66,6 @@ if __name__ == "__main__":
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             start = 0
-            if i == 151: start = 167
             for j in range(start, len(u_scholarslist[i]["scholar_links"])):
                 start = time.time()
                 scholar = create_scholar(page, u_scholarslist[i]["scholar_links"][j], u_scholarslist[i]["u_name"])
