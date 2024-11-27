@@ -4,12 +4,11 @@ import math
 import datetime
 import uni_list
 
-def fetchData_createTable(department_arg, cur, filename):
+def fetchData_createTable(department_arg, cur, filename, univs):
+    uni_arg = "'" + "','".join(univs) + "'"
     cur.execute(f"""
         SELECT degrees.id, degrees.degree, degrees.university, degrees.years FROM scholars join degrees on scholars.id = degrees.id
-        where scholars.university in ('ORTA DOĞU TEKNİK ÜNİVERSİTESİ', 'İSTANBUL TEKNİK ÜNİVERSİTESİ',
-        'YILDIZ TEKNİK ÜNİVERSİTESİ', 'BOĞAZİÇİ ÜNİVERSİTESİ', 'KARADENİZ TEKNİK ÜNİVERSİTESİ',
-        'HACETTEPE ÜNİVERSİTESİ', 'İHSAN DOĞRAMACI BİLKENT ÜNİVERSİTESİ', 'SABANCI ÜNİVERSİTESİ')
+        where scholars.university in ({uni_arg})
         and (scholars.department = {department_arg})
     """)
     degrees_data = cur.fetchall()
@@ -23,9 +22,7 @@ def fetchData_createTable(department_arg, cur, filename):
     # Query all scholars at once
     cur.execute(f"""
         SELECT scholars. university, scholars.id, scholars.title FROM scholars join degrees on scholars.id = degrees.id
-        where scholars.university in ('ORTA DOĞU TEKNİK ÜNİVERSİTESİ', 'İSTANBUL TEKNİK ÜNİVERSİTESİ',
-        'YILDIZ TEKNİK ÜNİVERSİTESİ', 'BOĞAZİÇİ ÜNİVERSİTESİ', 'KARADENİZ TEKNİK ÜNİVERSİTESİ',
-        'HACETTEPE ÜNİVERSİTESİ', 'İHSAN DOĞRAMACI BİLKENT ÜNİVERSİTESİ')
+        where scholars.university in ({uni_arg})
         and (scholars.department = {department_arg}) GROUP by scholars.university, scholars.id, scholars.title
     """)
     scholar_data_raw = cur.fetchall()
@@ -53,42 +50,41 @@ def fetchData_createTable(department_arg, cur, filename):
     write_to_excel(results, filename)
 
 def calculate_works(scholar_data, degrees, results, department_arg, cur):
+    cur.execute(f"""select scholars.id, count(*) from articles join scholars on articles.id = scholars.id where scholars.department = {department_arg} AND (articles.index LIKE '%SCI%' OR articles.index ILIKE '%scopus%' OR articles.index
+        ILIKE '%ei%' OR articles.index ILIKE '%engineering index%' OR articles.index ILIKE '%inspec%' or articles.index ILIKE '%wos%') and articles.category = 'Özgün Makale' group by scholars.id""")
+    query_result = cur.fetchall()
+    article_1_data = dict(query_result)
+
+    cur.execute(f"""select scholars.id, count(*) from articles join scholars on articles.id = scholars.id where scholars.department = {department_arg} group by scholars.id""")
+    query_result = cur.fetchall()
+
+    article_total = dict(query_result)
+    article_2_data = {key: article_total.get(key,0) - article_1_data.get(key,0) for key in article_total.keys()}
+
+    cur.execute(f"""select scholars.id, count(*) from projects join scholars on projects.id = scholars.id where scholars.department = {department_arg} and (projects.funder ilike '%tak%' or projects.funder ilike '%avrupa%' or projects.funder ilike '%uluslararası%') group by scholars.id""")
+    query_result = cur.fetchall()
+
+    project_1_data = dict(query_result)
+
+    cur.execute(f"""select scholars.id, count(*) from projects join scholars on projects.id = scholars.id where scholars.department = {department_arg} group by scholars.id""")
+    query_result = cur.fetchall()
+    project_total = dict(query_result)
+
+    project_2_data = {key: project_total.get(key,0) - project_1_data.get(key,0) for key in project_total.keys()}
+
     for university in scholar_data.keys():
         scholars = scholar_data.get(university, [])
         article_1_score = 0
         article_2_score = 0
         project_1_score = 0
         project_2_score = 0
-
-        cur.execute(f"""select scholars.id, count(*) from articles join scholars on articles.id = scholars.id where scholars.university = '{university}'
-            AND scholars.department = {department_arg} AND (articles.index LIKE '%SCI%' OR articles.index ILIKE '%scopus%' OR articles.index
-            ILIKE '%ei%' OR articles.index ILIKE '%engineering index%' OR articles.index ILIKE '%inspec%' or articles.index ILIKE '%wos%') and articles.category = 'Özgün Makale' group by scholars.id""")
-        query_result = cur.fetchall()
-        article_1_data = dict(query_result)
-
-        cur.execute(f"""select scholars.id, count(*) from articles join scholars on articles.id = scholars.id where scholars.university = '{university}'
-            AND scholars.department = {department_arg} group by scholars.id""")
-        query_result = cur.fetchall()
-
-        article_total = dict(query_result)
-        article_2_data = {key: article_total.get(key,0) - article_1_data.get(key,0) for key in article_total.keys()}
-
-        cur.execute(f"""select scholars.id, count(*) from projects join scholars on projects.id = scholars.id where scholars.university = '{university}'
-            AND scholars.department = {department_arg} and (projects.funder ilike '%tak%' or projects.funder ilike '%avrupa%' or projects.funder ilike '%uluslararası%') group by scholars.id""")
-        query_result = cur.fetchall()
-
-        project_1_data = dict(query_result)
-
-        cur.execute(f"""select scholars.id, count(*) from projects join scholars on projects.id = scholars.id where scholars.university = '{university}'
-            AND scholars.department = {department_arg} group by scholars.id""")
-        query_result = cur.fetchall()
-        project_total = dict(query_result)
-
-        project_2_data = {key: project_total.get(key,0) - project_1_data.get(key,0) for key in project_total.keys()}
+        excluded = 0
 
         for scholar in scholars:
             phd_year = highest_degree_finder(degrees.get(scholar[0], []), scholar[1])[1]
-            if phd_year == "Unknown": continue
+            if phd_year == "Unknown":
+                excluded += 1
+                continue
             else: phd_year = int(phd_year)
             # if phd_year == "Unknown": phd_year = 2024
             active_years = datetime.datetime.today().year - phd_year + 1
@@ -98,10 +94,12 @@ def calculate_works(scholar_data, degrees, results, department_arg, cur):
             project_1_score += project_1_data.get(scholar[0], 0) / active_years
             project_2_score += project_2_data.get(scholar[0], 0) / active_years
 
-        results[university]["article_tier_1"] = article_1_score / len(scholars)
-        results[university]["article_tier_2"] = article_2_score / len(scholars)
-        results[university]["project_tier_1"] = project_1_score / len(scholars)
-        results[university]["project_tier_2"] = project_2_score / len(scholars)
+        scholar_count = len(scholars) - excluded
+
+        results[university]["article_tier_1"] = article_1_score / scholar_count
+        results[university]["article_tier_2"] = article_2_score / scholar_count
+        results[university]["project_tier_1"] = project_1_score / scholar_count
+        results[university]["project_tier_2"] = project_2_score / scholar_count
 
 def self_recruitment_ratio(scholar_data, degrees, results):
     for university in scholar_data.keys():
@@ -184,11 +182,11 @@ def highest_degree_finder(degree_map, title):
 conn = psycopg2.connect("dbname=Scholars_Updated user=postgres password=root host=localhost port=5432")
 cur = conn.cursor()
 uni_list = uni_list.get_universities()
+univs_by_names = [univ[0] for univ in uni_list]
 
-
-fetchData_createTable('\'Bilgisayar Bilimleri ve Mühendisliği\'', cur, "bilgisayar.xlsx")
-# fetchData_createTable('\'Kimya Mühendisliği\'', cur, "kimya.xlsx")
-# fetchData_createTable('\'Endüstri Mühendisliği\'', cur, "endüstri.xlsx")
-# fetchData_createTable('\'Makine Mühendisliği\'', cur, "makine.xlsx")
-# fetchData_createTable('\'İnşaat Mühendisliği\'', cur, "inşaat.xlsx")
-# fetchData_createTable('\'Elektrik-Elektronik Mühendisliği\' or scholars.department = \'Elektrik-Elektronik ve Haberleşme Mühendisliği\'', cur, "elektronik.xlsx")
+fetchData_createTable('\'Bilgisayar Bilimleri ve Mühendisliği\'', cur, "bilgisayar.xlsx", univs_by_names)
+fetchData_createTable('\'Kimya Mühendisliği\'', cur, "kimya.xlsx")
+fetchData_createTable('\'Endüstri Mühendisliği\'', cur, "endüstri.xlsx")
+fetchData_createTable('\'Makine Mühendisliği\'', cur, "makine.xlsx")
+fetchData_createTable('\'İnşaat Mühendisliği\'', cur, "inşaat.xlsx")
+fetchData_createTable('\'Elektrik-Elektronik Mühendisliği\' or scholars.department = \'Elektrik-Elektronik ve Haberleşme Mühendisliği\'', cur, "elektronik.xlsx")
